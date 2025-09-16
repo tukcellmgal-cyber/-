@@ -1,0 +1,182 @@
+{
+  "image": "mcr.microsoft.com/devcontainers/universal:2",
+  "features": {}
+}
+// شركة حوران التجارية — تطبيق React واحد (Single File) // تعليمات سريعة: // 1) انسخ هذا الملف إلى مشروع React (Vite/CRA). // 2) ثبت الحزم: npm i jspdf file-saver // 3) شغّل المشروع: npm run dev // ملاحظة: التصميم يعتمد على Tailwind CSS (أضف Tailwind إلى مشروعك).
+
+import React, { useState, useEffect, useRef } from "react"; import { jsPDF } from "jspdf"; import { saveAs } from "file-saver";
+
+// اسم الشركة const COMPANY_NAME = "شركة حوران التجارية";
+
+// مثال بيانات منتجات ابتدائية const SAMPLE_PRODUCTS = [ { id: "p1", name: "منتج أ", sku: "HUR-001", price: 10.0, stock: 500, tiers: [ { min: 10, price: 9 }, { min: 50, price: 8 }, { min: 100, price: 7 } ], desc: "وصف قصير عن منتج أ" }, { id: "p2", name: "منتج ب", sku: "HUR-002", price: 25.0, stock: 200, tiers: [{ min: 20, price: 23 }, { min: 100, price: 20 }], desc: "وصف منتج ب" } ];
+
+function currency(n) { return n.toLocaleString("ar-EG", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " \u062F.\u0623"; // د.أ example }
+
+export default function App() { const [products, setProducts] = useState(() => { const raw = localStorage.getItem("hur_products"); return raw ? JSON.parse(raw) : SAMPLE_PRODUCTS; }); const [cart, setCart] = useState(() => { const raw = localStorage.getItem("hur_cart"); return raw ? JSON.parse(raw) : []; }); const [isAdmin, setIsAdmin] = useState(false); const [query, setQuery] = useState(""); const [customer, setCustomer] = useState({ name: "", phone: "", address: "" });
+
+useEffect(() => { localStorage.setItem("hur_products", JSON.stringify(products)); }, [products]);
+
+useEffect(() => { localStorage.setItem("hur_cart", JSON.stringify(cart)); }, [cart]);
+
+// حساب سعر حسب مستوى الجملة function getPriceFor(product, qty) { if (!product.tiers || product.tiers.length === 0) return product.price; const tiers = [...product.tiers].sort((a, b) => b.min - a.min); for (const t of tiers) { if (qty >= t.min) return t.price; } return product.price; }
+
+function addToCart(productId, qty) { qty = Number(qty || 1); const p = products.find((x) => x.id === productId); if (!p) return; if (qty > p.stock) { alert("الكمية المطلوبة أكبر من المخزون المتاح."); return; } setCart((c) => { const found = c.find((x) => x.id === productId); if (found) { return c.map((it) => (it.id === productId ? { ...it, qty: it.qty + qty } : it)); } return [...c, { id: productId, qty }]; }); }
+
+function updateQty(id, qty) { qty = Number(qty); const p = products.find((x) => x.id === id); if (qty > p.stock) { alert("الكمية المطلوبة أكبر من المخزون."); return; } setCart((c) => c.map((it) => (it.id === id ? { ...it, qty } : it)).filter(x => x.qty>0)); }
+
+function removeFromCart(id) { setCart((c) => c.filter((x) => x.id !== id)); }
+
+function cartSummary() { let subtotal = 0; for (const item of cart) { const p = products.find((x) => x.id === item.id); const price = getPriceFor(p, item.qty); subtotal += price * item.qty; } return { subtotal }; }
+
+function checkout() { if (cart.length === 0) { alert("عربة الشراء فارغة."); return; } // خصم من المخزون const updated = products.map((p) => { const it = cart.find((c) => c.id === p.id); if (it) return { ...p, stock: p.stock - it.qty }; return p; }); setProducts(updated); // أنشئ فاتورة PDF const invoice = makeInvoiceData(); generatePDF(invoice); // تفريغ العربة setCart([]); }
+
+function makeInvoiceData() { const items = cart.map((it) => { const p = products.find((x) => x.id === it.id); const unit = getPriceFor(p, it.qty); return { sku: p.sku, name: p.name, qty: it.qty, unit, total: unit * it.qty }; }); const subtotal = items.reduce((s, i) => s + i.total, 0); const vat = 0; // ضريبة إن أردت const total = subtotal + vat; const invoiceNo = "INV-" + Date.now(); return { invoiceNo, date: new Date().toLocaleString("ar-EG"), customer, items, subtotal, vat, total }; }
+
+function generatePDF(data) { const doc = new jsPDF({ unit: "pt", format: "a4" }); const left = 40; let y = 40; doc.setFontSize(18); doc.text(COMPANY_NAME, 400, y, { align: "right" }); y += 25; doc.setFontSize(12); doc.text(فاتورة رقم: ${data.invoiceNo} , 400, y, { align: "right" }); y += 18; doc.text(التاريخ: ${data.date}, 400, y, { align: "right" }); y += 25; doc.text(العميل: ${data.customer.name || "---"}, left, y); y += 15; doc.text(الهاتف: ${data.customer.phone || "---"}, left, y); y += 20;
+
+// جدول مبسط
+doc.autoTable({
+  startY: y,
+  head: [["الرقم", "الصنف", "الكمية", "سعر الوحدة", "المجموع"]],
+  body: data.items.map((it, idx) => [
+    idx + 1,
+    it.name,
+    it.qty,
+    it.unit.toFixed(2),
+    it.total.toFixed(2)
+  ]),
+  styles: { font: "helvetica" },
+  headStyles: { fillColor: [211, 211, 211] }
+});
+
+// ملخص
+const finalY = doc.lastAutoTable ? doc.lastAutoTable.finalY + 20 : y + 140;
+doc.text(`المجموع: ${data.subtotal.toFixed(2)}`, 400, finalY, { align: "right" });
+doc.text(`الإجمالي: ${data.total.toFixed(2)}`, 400, finalY + 16, { align: "right" });
+
+doc.save(`${data.invoiceNo}.pdf`);
+
+}
+
+// إدارة منتجات (إضافة/تعديل/حذف) function addProduct(obj) { setProducts((p) => [...p, obj]); } function updateProduct(obj) { setProducts((ps) => ps.map((x) => (x.id === obj.id ? obj : x))); } function deleteProduct(id) { if (!window.confirm("هل تريد حذف المنتج؟")) return; setProducts((ps) => ps.filter((x) => x.id !== id)); }
+
+// تصدير واستيراد منتجات وطلبات function exportData() { const blob = new Blob([JSON.stringify({ products, cart }, null, 2)], { type: "application/json" }); saveAs(blob, "hur-export.json"); } function importData(file) { const reader = new FileReader(); reader.onload = (e) => { try { const obj = JSON.parse(e.target.result); if (obj.products) setProducts(obj.products); if (obj.cart) setCart(obj.cart); alert("تم استيراد البيانات."); } catch (err) { alert("ملف غير صالح"); } }; reader.readAsText(file); }
+
+// UI return ( <div className="min-h-screen bg-gray-50 p-6 font-sans text-right" dir="rtl"> <header className="max-w-6xl mx-auto flex justify-between items-center mb-6"> <div> <h1 className="text-2xl font-bold">{COMPANY_NAME}</h1> <p className="text-sm text-gray-600">متجر بالجملة — إدارة مخزون وفواتير PDF</p> </div> <div className="flex gap-2 items-center"> <button className="px-3 py-1 rounded border" onClick={() => { const pwd = prompt('كلمة مرور الادمن:'); if (pwd==='1234') setIsAdmin(true); else alert('خطأ'); }}>دخول المدير</button> {isAdmin && <button className="px-3 py-1 rounded border" onClick={() => setIsAdmin(false)}>خروج</button>} </div> </header>
+
+<main className="max-w-6xl mx-auto grid md:grid-cols-3 gap-6">
+    <section className="md:col-span-2">
+      <div className="mb-4 flex gap-2">
+        <input className="flex-1 p-2 border rounded" placeholder="ابحث عن صنف أو رمز SKU" value={query} onChange={(e)=>setQuery(e.target.value)} />
+        <button className="px-3 py-2 bg-blue-600 text-white rounded" onClick={()=>{}}>بحث</button>
+      </div>
+
+      <div className="grid sm:grid-cols-2 gap-4">
+        {products.filter(p => p.name.includes(query) || p.sku.includes(query)).map(p => (
+          <div key={p.id} className="p-4 border rounded bg-white">
+            <div className="flex justify-between">
+              <div>
+                <h3 className="font-bold">{p.name}</h3>
+                <p className="text-xs text-gray-500">{p.desc}</p>
+                <p className="mt-2">السعر الأساسي: {currency(p.price)}</p>
+                <p>المخزون: {p.stock}</p>
+                <div className="text-sm mt-1">أسعار الجملة:</div>
+                <ul className="text-sm">
+                  {p.tiers.map((t, i) => <li key={i}>من {t.min} => {currency(t.price)}</li>)}
+                </ul>
+              </div>
+              <div className="w-32 flex flex-col gap-2">
+                <input type="number" defaultValue={1} min={1} className="p-1 border rounded text-center" id={`qty-${p.id}`} />
+                <button className="px-2 py-1 bg-green-600 text-white rounded" onClick={() => addToCart(p.id, Number(document.getElementById(`qty-${p.id}`).value))}>أضف للعربة</button>
+                {isAdmin && (
+                  <div className="flex flex-col gap-1">
+                    <button className="px-2 py-1 border rounded" onClick={() => { const newName = prompt('اسم المنتج', p.name); if (!newName) return; const obj = { ...p, name: newName }; updateProduct(obj); }}>تعديل</button>
+                    <button className="px-2 py-1 border rounded" onClick={() => deleteProduct(p.id)}>حذف</button>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+
+    <aside className="bg-white p-4 border rounded">
+      <h2 className="font-bold mb-2">عربة الشراء</h2>
+      <div className="space-y-2">
+        {cart.length===0 && <p className="text-gray-500">العربة فارغة</p>}
+        {cart.map(it => {
+          const p = products.find(x=>x.id===it.id);
+          const unit = getPriceFor(p, it.qty);
+          return (
+            <div key={it.id} className="flex justify-between items-center">
+              <div>
+                <div className="font-semibold">{p.name}</div>
+                <div className="text-sm">{p.sku}</div>
+                <div className="text-sm">{currency(unit)} × {it.qty} = {currency(unit*it.qty)}</div>
+              </div>
+              <div className="flex flex-col items-end gap-2">
+                <input type="number" value={it.qty} min={0} onChange={(e)=>updateQty(it.id, e.target.value)} className="w-20 p-1 border rounded text-center" />
+                <button className="text-red-600 text-sm" onClick={()=>removeFromCart(it.id)}>إزالة</button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="mt-4 border-t pt-3">
+        <div className="flex justify-between"><span>المجموع</span><strong>{currency(cartSummary().subtotal)}</strong></div>
+        <div className="mt-3">
+          <input className="w-full p-2 border rounded mb-2" placeholder="اسم العميل" value={customer.name} onChange={(e)=>setCustomer(s=>({...s,name:e.target.value}))} />
+          <input className="w-full p-2 border rounded mb-2" placeholder="هاتف العميل" value={customer.phone} onChange={(e)=>setCustomer(s=>({...s,phone:e.target.value}))} />
+          <input className="w-full p-2 border rounded mb-2" placeholder="عنوان العميل" value={customer.address} onChange={(e)=>setCustomer(s=>({...s,address:e.target.value}))} />
+          <button className="w-full py-2 bg-indigo-600 text-white rounded" onClick={checkout}>انشاء فاتورة وتسليم الطلب</button>
+        </div>
+      </div>
+
+      <div className="mt-4">
+        <button className="px-2 py-1 border rounded w-full" onClick={exportData}>تصدير البيانات (JSON)</button>
+        <label className="block mt-2">
+          <span className="sr-only">استيراد</span>
+          <input type="file" accept="application/json" onChange={(e)=>importData(e.target.files[0])} />
+        </label>
+      </div>
+    </aside>
+
+    {isAdmin && (
+      <section className="md:col-span-3 bg-white p-4 border rounded mt-4">
+        <h3 className="font-bold mb-2">لوحة الإدارة</h3>
+        <AdminPanel products={products} addProduct={addProduct} updateProduct={updateProduct} />
+      </section>
+    )}
+  </main>
+  <footer className="max-w-6xl mx-auto mt-8 text-center text-sm text-gray-500">© {new Date().getFullYear()} {COMPANY_NAME}</footer>
+</div>
+
+); }
+
+function AdminPanel({ products, addProduct, updateProduct }) { const [form, setForm] = useState({ name: "", sku: "", price: 0, stock: 0, tiersText: "" });
+
+function submit(e) { e.preventDefault(); const id = "p" + Date.now(); const tiers = form.tiersText .split(";") .map(s=>s.trim()) .filter(Boolean) .map(part => { const [min, price] = part.split(',').map(x=>x.trim()); return { min: Number(min), price: Number(price) }; }); addProduct({ id, name: form.name, sku: form.sku, price: Number(form.price), stock: Number(form.stock), tiers, desc: "" }); setForm({ name: "", sku: "", price: 0, stock: 0, tiersText: "" }); }
+
+return ( <div className="grid md:grid-cols-2 gap-4"> <form className="p-3 border rounded" onSubmit={submit}> <h4 className="font-semibold mb-2">إضافة منتج جديد</h4> <input className="w-full p-2 mb-2 border rounded" placeholder="اسم المنتج" value={form.name} onChange={e=>setForm(s=>({...s,name:e.target.value}))} required /> <input className="w-full p-2 mb-2 border rounded" placeholder="SKU" value={form.sku} onChange={e=>setForm(s=>({...s,sku:e.target.value}))} /> <input type="number" className="w-full p-2 mb-2 border rounded" placeholder="السعر الأساسي" value={form.price} onChange={e=>setForm(s=>({...s,price:e.target.value}))} /> <input type="number" className="w-full p-2 mb-2 border rounded" placeholder="المخزون" value={form.stock} onChange={e=>setForm(s=>({...s,stock:e.target.value}))} /> <textarea className="w-full p-2 mb-2 border rounded" placeholder="مستويات الجملة (اكتب كل مستوى بشكل: min,price ; مثال: 10,9;50,8)" value={form.tiersText} onChange={e=>setForm(s=>({...s,tiersText:e.target.value}))} /> <button className="px-3 py-2 bg-green-600 text-white rounded">إضافة</button> </form>
+
+<div className="p-3 border rounded">
+    <h4 className="font-semibold mb-2">المنتجات الحالية</h4>
+    <div className="space-y-2 max-h-64 overflow-auto">
+      {products.map(p=> (
+        <div key={p.id} className="p-2 border rounded flex justify-between items-center">
+          <div>
+            <div className="font-semibold">{p.name}</div>
+            <div className="text-xs">SKU: {p.sku} — {p.stock} قطعة</div>
+          </div>
+          <div className="flex gap-2">
+            <button className="px-2 py-1 border rounded" onClick={()=>{ const newPrice = prompt('سعر جديد', p.price); if (newPrice) updateProduct({...p, price: Number(newPrice)}); }}>تعديل سعر</button>
+          </div>
+        </div>
+      ))}
+    </div>
+  </div>
+</div>
+
+); }
